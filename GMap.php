@@ -59,7 +59,7 @@ CREATE TABLE GEOCODES (
 /**  
  * Original class name is GoogleMapAPI
  * Changed class name to Gmap to remain compatible with applications already using the Gmap class
- * The changed class name affects three functions on lines 620, 1529, 1534
+ * The changed class name affects three functions on lines 1529, 1534
  */ 
     
 class Gmap {
@@ -619,7 +619,7 @@ class Gmap {
      * @param string $map_id the DOM element ID for the map
      * @param string $app_id YOUR Yahoo App ID
      */
-    function Gmap($map_id = 'map', $app_id = 'MyMapApp') {
+    function GoogleMapAPI($map_id = 'map', $app_id = 'MyMapApp') {
         $this->map_id = $map_id;
         $this->sidebar_id = 'sidebar_' . $map_id;
         $this->app_id = $app_id;
