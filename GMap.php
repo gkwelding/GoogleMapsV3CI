@@ -29,8 +29,8 @@
  * maintains all original GNU software licenses.
  */
 /**
- * @link http://code.google.com/p/phpgooglemapapiv3/
- * @copyright 2010 Brad wedell
+ * @link http://code.google.com/p/php-google-map-api/
+ * @copyright 2010-2012 Brad wedell
  * @author Brad Wedell
  * @package GoogleMapAPI (version 3)
  * @version 3.0beta
@@ -41,11 +41,11 @@
 /*
 For database caching, you will want to use this schema:
 
-CREATE TABLE geocode_cache (
-  id int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  lng double NOT NULL,
-  lat double NOT NULL,
-  query varchar(255) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL
+CREATE TABLE GEOCODES (
+  address varchar(255) NOT NULL default '',
+  lon float default NULL,
+  lat float default NULL,
+  PRIMARY KEY  (address)
 );
 
 */
@@ -55,9 +55,31 @@ CREATE TABLE geocode_cache (
  * @package GoogleMapAPI
  * @version 3.0beta
  */
+ 
+/**  
+ * Original class name is GoogleMapAPI
+ * Changed class name to Gmap to remain compatible with applications already using the Gmap class
+ * The changed class name affects three functions on lines 620, 1529, 1534
+ */ 
+    
 class Gmap {
 
-	var $CI = null;
+    var $CI = null;
+    
+    /**
+     * contains any map styles in a json string
+     *
+     * @var string json $map_styles
+     */
+    var $map_styles = true;     
+
+    /**
+     * PEAR::DB DSN for geocode caching. example:
+     * $dsn = 'mysql://user:pass@localhost/dbname';
+     *
+     * @var string
+     */
+    var $dsn = null;
     
     /**
      * current map id, set when you instantiate
@@ -81,11 +103,28 @@ class Gmap {
     var $sidebar_id = null;    
     
     /**
+     * With this, you can append lang= and region= to the script url for localization. If Google adds more features in the future, they will be supported by default
+     *
+     * See http://code.google.com/apis/maps/documentation/javascript/basics.html#Localization
+     * for more info on Localization
+     *
+     * @var array
+     **/
+    var $api_options=null;
+    
+    /**
      * Whether to use new V3 mobile functionality
      *
      * @var bool
      */
     var $mobile=false;
+    
+    /**
+     * The viewport meta tag allows more values than these defaults; you can get more info here: http://www.html-5.com/metatags/index.html#viewport-meta-tag
+     *
+     * @var string
+     */
+    var $meta_viewport = "initial-scale=1.0, user-scalable=no";
     
     /**
      * DEPRECATED: Google now has geocoding service.  
@@ -150,6 +189,12 @@ class Gmap {
      * @var bool
      */
     var $type_controls = true;
+    
+    /**
+     * determines unit system to use for directions, blank = default
+     * @var string (METRIC, IMPERIAL)
+     */
+    var $directions_unit_system = '';
 	
 	/**
 	 * sets default option for type controls(DEFAULT, HORIZONTAL_BAR, DROPDOWN_MENU)
@@ -171,6 +216,11 @@ class Gmap {
      * @var bool
      */
     var $scale_control = true;
+    /**
+	  * class variable to control scrollwheel
+	  * @var bool
+	  */
+    var $scrollwheel = true; 
     
     /**
      * enables overview map control
@@ -300,6 +350,9 @@ class Gmap {
      * @deprecated
      */
     var $directions = true;
+    
+      /* waypoints  */
+	  protected  $_waypoints_string = '';
 
     /**
      * determines if map markers bring up an info window
@@ -453,6 +506,12 @@ class Gmap {
      */
     var $use_suggest = false;
 
+    /** #)MS
+     * list of added polygon
+     *
+     * @var array
+     */
+    var $_polygons = array();
     
     /**
      * list of added polylines
@@ -527,7 +586,7 @@ class Gmap {
      *
      * @var string
      */
-    var $_db_cache_table = 'geocode_cache';
+    var $_db_cache_table = 'GEOCODES';
     
     /**
      * Class variable that will store generated header code for JS to display directions
@@ -552,7 +611,7 @@ class Gmap {
      *
      * @var bool
      */
-	 var $_minify_js = false;
+	 var $_minify_js = true;
         
     /**
      * class constructor
@@ -560,7 +619,7 @@ class Gmap {
      * @param string $map_id the DOM element ID for the map
      * @param string $app_id YOUR Yahoo App ID
      */
-    function GoogleMapAPI($map_id = 'map', $app_id = 'MyMapApp') {
+    function Gmap($map_id = 'map', $app_id = 'MyMapApp') {
         $this->map_id = $map_id;
         $this->sidebar_id = 'sidebar_' . $map_id;
         $this->app_id = $app_id;
@@ -577,8 +636,17 @@ class Gmap {
 	 * function to disable map display (used to display street view only)
 	 */
 	function disableMapDisplay(){
-		$this->display_map = true;
+		$this->display_map = false;
 	}
+    
+    /**
+     * sets the PEAR::DB dsn
+     *
+     * @param string $dsn Takes the form of "mysql://user:pass@localhost/db_name"
+     */
+    function setDSN($dsn) {
+        $this->dsn = $dsn;   
+    }
     
     /**
      * sets the width of the map
@@ -629,6 +697,16 @@ class Gmap {
     function setZoomLevel($level) {
         $this->zoom = (int) $level;
     }    
+    
+    
+    /**
+     * sets any map styles ( style wizard: http://gmaps-samples-v3.googlecode.com/svn/trunk/styledmaps/wizard/index.html )
+     *
+     * @param string $styles json string of the map styles to be applied
+     */
+    function setMapStyles($styles) {
+        $this->map_styles = (string) $styles;
+    }       
             
     /**
      * enables the map controls (zoom/move)
@@ -655,6 +733,13 @@ class Gmap {
         if(in_array($size,array('large','small')))
             $this->control_size = $size;
     }            
+
+    /**
+	 * disable mouse scrollwheel on Map
+	 */
+    function disableScrollWheel(){
+        $this->scrollwheel = false;
+    } 
 
      /**
      * enables the type controls (map/satellite/hybrid)
@@ -781,6 +866,24 @@ class Gmap {
 			} 
         }
     }
+    
+ 
+ function addWaypoints($lat, $lon, $stopover = TRUE)
+ {
+   if( ! empty($this->_waypoints_string) )  $this->_waypoints_string .= ",";
+     $tmp_stopover =  $stopover?'true':'false';
+     $this->_waypoints_string .= "{location: new google.maps.LatLng({$lat},{$lon}), stopover: {$tmp_stopover}}";
+ }
+
+  function addWaypointByAddress($address,$stopover = TRUE)
+  {
+     if( $tmp_geocode = $this->getGeocode($address))
+     {
+       $this->addWaypoints($tmp_geocode['lat'], $tmp_geocode['lon'], $stopover);
+     }
+ }
+            
+            
         
     /**
      * enables the type controls (map/satellite/hybrid)
@@ -1425,12 +1528,12 @@ class Gmap {
     function createMarkerIcon($iconImage,$iconShadowImage = '',$iconAnchorX = 'x',$iconAnchorY = 'x',$infoWindowAnchorX = 'x',$infoWindowAnchorY = 'x') {
         $_icon_image_path = strpos($iconImage,'http') === 0 ? $iconImage : $_SERVER['DOCUMENT_ROOT'] . $iconImage;
         if(!($_image_info = @getimagesize($_icon_image_path))) {
-            die('GoogleMapAPI:createMarkerIcon: Error reading image: ' . $iconImage);   
+            die('Gmap:createMarkerIcon: Error reading image: ' . $iconImage);   
         }
         if($iconShadowImage) {
             $_shadow_image_path = strpos($iconShadowImage,'http') === 0 ? $iconShadowImage : $_SERVER['DOCUMENT_ROOT'] . $iconShadowImage;
             if(!($_shadow_info = @getimagesize($_shadow_image_path))) {
-                die('GoogleMapAPI:createMarkerIcon: Error reading shadow image: ' . $iconShadowImage);
+                die('Gmap:createMarkerIcon: Error reading shadow image: ' . $iconShadowImage);
             }
         }
         
@@ -1544,19 +1647,19 @@ class Gmap {
      * print map header javascript (goes between <head></head>)
      * 
      */
-    function printHeaderJS() {
-        return $this->getHeaderJS();
+    function printHeaderJS() { 
+        echo $this->getHeaderJS();
     }
     
     /**
      * return map header javascript (goes between <head></head>)
      * 
      */
-    function getHeaderJS() {
+    function getHeaderJS() { 
 		$_headerJS = "";
         if( $this->mobile == true){
         	$_headerJS .= "
-        	   <meta name='viewport' content='initial-scale=1.0, user-scalable=no' />
+        	    <meta name='viewport' content='".$this->meta_viewport."' />
         	";
         }
 		if(!empty($this->_elevation_polylines)||(!empty($this->_directions)&&$this->elevation_directions)){
@@ -1567,8 +1670,14 @@ class Gmap {
 				google.load('visualization', '1', {packages: ['columnchart']});
 			</script>";
 		}
-        $_headerJS .= "<script type='text/javascript' src='http://maps.google.com/maps/api/js?sensor=".(($this->mobile==true)?"true":"false")."'></script>";
-		if($this->marker_clusterer){
+        $scriptUrl = "http://maps.google.com/maps/api/js?sensor=".(($this->mobile==true)?"true":"false");
+        if( is_array( $this->api_options ) ) {
+            foreach( $this->api_options as $key => $value ){
+                $scriptUrl .= '&'.$key.'='.$value;
+            }
+        }
+        $_headerJS .= "<script type='text/javascript' src='".$scriptUrl."'></script>";
+        if($this->marker_clusterer){
 			$_headerJS .= "<script type='text/javascript' src='".$this->marker_clusterer_location."' ></script>";
 		}        
         if($this->local_search){/*TODO: Load Local Search API V3 when available*/}   
@@ -1582,21 +1691,21 @@ class Gmap {
 	*      $map->printOnLoad();    
 	*/
     function printOnLoad() {
-        return $this->getOnLoad();
+        echo $this->getOnLoad();
     }
     
     /**
      * print onLoad function name
      */
     function printOnLoadFunction(){
-        return $this->getOnLoadFunction();
+        echo $this->getOnLoadFunction();
     }
 
     /**
      * return js to set onload function
      */
     function getOnLoad() {
-        return '<script language="javascript" type="text/javascript" charset="utf-8">debugger;window.onload=onLoad'.$this->map_id.';</script>';                       
+        return '<script type="text/javascript">window.onload=onLoad'.$this->map_id.';</script>';                       
     }
     
     /**
@@ -1611,7 +1720,7 @@ class Gmap {
      * 
      */
     function printMapJS() {
-        return $this->getMapJS();
+        echo $this->getMapJS();
     }    
 
     /**
@@ -1626,12 +1735,17 @@ class Gmap {
         $_output .= "/*************************************************\n";
         $_output .= " * Created with GoogleMapAPI" . $this->_version . "\n";
         $_output .= " * Author: Brad Wedell <brad AT mycnl DOT com>\n";
-        $_output .= " * Link http://code.google.com/p/phpgooglemapapiv3/\n";
-        $_output .= " * Copyright 2010 Brad Wedell\n";
+        $_output .= " * Link http://code.google.com/p/php-google-map-api/\n";
+        $_output .= " * Copyright 2010-2012 Brad Wedell\n";
         $_output .= " * Original Author: Monte Ohrt <monte AT ohrt DOT com>\n";
         $_output .= " * Original Copyright 2005-2006 New Digital Group\n";
         $_output .= " * Originial Link http://www.phpinsider.com/php/code/GoogleMapAPI/\n";
         $_output .= " *************************************************/\n";
+        
+        // create global info window ( so we can auto close it )
+        $_script .= "var infowindow = new google.maps.InfoWindow();";
+			        
+        
 		if($this->street_view_dom_id!=""){
 			$_script .= "
 				var panorama".$this->street_view_dom_id."$_key = '';
@@ -1681,6 +1795,13 @@ class Gmap {
 					var elevationPolylines$_key = [];
 				";
 			}
+		}
+        //Polygons
+		if(!empty($this->_polygons)){
+			$_script .= "
+				var polygon$_key = [];
+				var polygonCoords$_key = [];
+			";
 		}
 		//Elevation stuff
 		if(!empty($this->_elevation_polylines)||(!empty($this->_directions)&&$this->elevation_directions)){
@@ -1768,6 +1889,7 @@ class Gmap {
 			
 			$_script .= "
 				var mapOptions$_key = {
+					scrollwheel: ". ($this->scrollwheel?"true":"false") . ",
 					zoom: ".$this->zoom.",
 					mapTypeId: google.maps.MapTypeId.".$this->map_type.",
 					mapTypeControl: ".($this->type_controls?"true":"false").",
@@ -1791,8 +1913,23 @@ class Gmap {
 				";
 			}
 			
+			
+			// Add any map styles if they are present
+			if( isset($this->map_styles) ) {
+			
+				$_script .= "
+						var styles$_key = ".$this->map_styles.";		
+				";
+			}
+			
+			
+			
 			$_script .= "
 				map$_key = new google.maps.Map(mapObj$_key,mapOptions$_key);
+			";
+			
+			$_script .= "
+				map$_key.setOptions({styles: styles$_key});
 			";
 				
 			if($this->street_view_dom_id!=""){
@@ -1899,6 +2036,7 @@ class Gmap {
 			$_script .= $this->getAddMarkersJS();
 			
 			$_script .= $this->getPolylineJS();
+			$_script .= $this->getPolygonJS();
 			$_script .= $this->getAddOverlayJS();
 			
 			if($this->_kml_overlays!==""){
@@ -2084,13 +2222,22 @@ class Gmap {
 			if($this->avoid_highways==TRUE)
 			   $directionsParams .= ", \n avoidHighways: true";
 			if($this->avoid_tollways==TRUE)
-			   $directionsParams .= ", \n avoidTolls: true";			
+			   $directionsParams .= ", \n avoidTolls: true";
+
+			if($this->directions_unit_system!=''){
+			    if($this->directions_unit_system == 'METRIC'){
+			        $directionsParams .= ", \n unitSystem: google.maps.DirectionsUnitSystem.METRIC";
+			    }else{
+			        $directionsParams .= ", \n unitSystem: google.maps.DirectionsUnitSystem.IMPERIAL";
+			    }
+			}
 			
 			$_output .= "
 			    directions".$this->map_id."['$dom_id'] = {
 					displayRenderer:new google.maps.DirectionsRenderer(),
 					directionService:new google.maps.DirectionsService(),
 					request:{
+            					waypoints: [{$this->_waypoints_string}],
 						origin: '".$directions["start"]."',
 						destination: '".$directions["dest"]."'
 						$directionsParams
@@ -2150,19 +2297,30 @@ class Gmap {
 			        map: map,
 			        title: title};  
 			    if(icon!=''){marker_options.icon = icon;}
-			    if(icon_shadow!=''){marker_options.icon_shadow = icon_shadow;}
+			    if(icon_shadow!=''){marker_options.shadow = icon_shadow;}
+			    
 			    //create marker
 			    var new_marker = new google.maps.Marker(marker_options);
 			    if(html!=''){
 					".(($this->info_window)?"
-			        var infowindow = new google.maps.InfoWindow({content: html});
+			        
 			        google.maps.event.addListener(new_marker, '".$this->window_trigger."', function() {
-			          infowindow.open(map,new_marker);
+			          	infowindow.close();	
+			          	infowindow.setContent(html);
+			          	infowindow.open(map,new_marker);
 			        });
+			        
 					if(openers != ''&&!isEmpty(openers)){
 			           for(var i in openers){
 			             var opener = document.getElementById(openers[i]);
-			             opener.on".$this->window_trigger." = function(){infowindow.open(map,new_marker); return false};
+			             opener.on".$this->window_trigger." = function() { 
+			             
+			             	infowindow.close();
+			             	infowindow.setContent(html);
+			             	infowindow.open(map,new_marker); 
+			             	
+			          		return false;			             	
+			             };
 			           }
 			        }
 					":"")."
@@ -2301,7 +2459,7 @@ class Gmap {
      * 
      */
     function printMap() {
-        return $this->getMap();
+        echo $this->getMap();
     }
 
     /**
@@ -2339,7 +2497,7 @@ class Gmap {
      * 
      */
     function printSidebar() {
-        return $this->getSidebar();
+        echo $this->getSidebar();
     }    
 
     /**
@@ -2375,23 +2533,30 @@ class Gmap {
      * @param string $address
      * @return bool|array False if no cache, array of data if has cache
      */
-    function getCache($address) {        
-		$_ret = array();
-		
-		$this->CI = &get_instance();
-		
-		$this->CI->load->database();
-		
-		$_res = $this->CI->db->select('lat,lng')->from($this->_db_cache_table)->where('query', strtolower($address))->get();
-		
-		$_row = $_res->row_array();
-
-		if(isset($_row['lat']) && isset($_row['lng'])) {			
-			$_ret['lat'] = $_row['lat'];
-			$_ret['lon'] = $_row['lng'];
-		}
-		
-		return !empty($_ret) ? $_ret : false;
+    function getCache($address) {
+        if(!isset($this->dsn))
+            return false;
+        
+        $_ret = array();
+        
+        // PEAR DB
+        require_once('DB.php');          
+        $_db =& DB::connect($this->dsn);
+        if (PEAR::isError($_db)) {
+            die($_db->getMessage());
+        }
+        $_res =& $_db->query("SELECT lon,lat FROM {$this->_db_cache_table} where address = ?", $address);
+        if (PEAR::isError($_res)) {
+            die($_res->getMessage());
+        }
+        if($_row = $_res->fetchRow()) {            
+            $_ret['lon'] = $_row[0];
+            $_ret['lat'] = $_row[1];
+        }
+        
+        $_db->disconnect();
+        
+        return !empty($_ret) ? $_ret : false;
     }
     
     /**
@@ -2403,23 +2568,20 @@ class Gmap {
      * @return bool Status of put cache request
      */
     function putCache($address, $lon, $lat) {
-		if((strlen($address) == 0 || strlen($lon) == 0 || strlen($lat) == 0)) return false;
-		
-		$_address = trim(strtolower($address));
-		
-		$data = array(
-					'query' => $_address,
-					'lat' => $lat,
-					'lng' => $lon
-					);
-					
-		$this->CI = &get_instance();
-		
-		$this->CI->load->database();
-
-		$this->CI->db->insert('geocode_cache',$data);
-		
-		return true;       
+        if(!isset($this->dsn) || (strlen($address) == 0 || strlen($lon) == 0 || strlen($lat) == 0))
+           return false;
+        // PEAR DB
+        require_once('DB.php');         
+        $_db =& DB::connect($this->dsn);
+        if (PEAR::isError($_db)) {
+        	die($_db->getMessage());
+        }
+        $_res =& $_db->query('insert into '.$this->_db_cache_table.' values (?, ?, ?)', array($address, $lon, $lat));
+        if (PEAR::isError($_res)) {
+            die($_res->getMessage());
+        }
+        $_db->disconnect();
+        return true;        
     }
    
     /**
@@ -2444,8 +2606,7 @@ class Gmap {
                 break;
             case 'YAHOO':
             default:        
-                $_url = 'http://%s/MapsService/V1/geocode';
-                $_url .= sprintf('?appid=%s&location=%s',$this->lookup_server['YAHOO'],$this->app_id,rawurlencode($address));
+                $_url = sprintf('http://%s/MapsService/V1/geocode?appid=%s&location=%s',$this->lookup_server['YAHOO'],$this->app_id,rawurlencode($address));
                 $_result = false;
                 if($_result = $this->fetchURL($_url)) {
                     preg_match('!<Latitude>(.*)</Latitude><Longitude>(.*)</Longitude>!U', $_result, $_match);
@@ -2538,7 +2699,121 @@ class Gmap {
       }
       
     }    
-    
-}
 
+    /** #)MS
+     * overridable function to generate polyline js - for now can only be used on a map, not a streetview
+     */
+    function getPolygonJS() {
+        $_output = '';
+        foreach($this->_polygons as $polygon_id => $_polygon) {
+        	$_coords_output = "";
+        	foreach($_polygon["coords"] as $_coords){
+				if($_coords_output != ""){$_coords_output.=",";}
+        		$_coords_output .= "
+        		    new google.maps.LatLng(".$_coords["lat"].", ".$_coords["long"].")
+        		";
+        	}
+        	$_output .= "
+        	   polygonCoords".$this->map_id."[$polygon_id] = [".$_coords_output."];    	
+			   polygon".$this->map_id."[$polygon_id] = new google.maps.Polygon({
+				  paths: polygonCoords".$this->map_id."[$polygon_id]
+				  ".(($_polygon['color']!="")?", strokeColor: '".$_polygon['color']."'":"")."
+				  ".(($_polygon['opacity']!=0)?", strokeOpacity: ".$_polygon['opacity']."":"")."
+				  ".(($_polygon['weight']!=0)?", strokeWeight: ".$_polygon['weight']."":"")."
+				  ".(($_polygon['fill_color']!="")?", fillColor: '".$_polygon['fill_color']."'":"")."
+				  ".(($_polygon['fill_opacity']!=0)?", fillOpacity: ".$_polygon['fill_opacity']."":"")."
+			  });			
+			  polygon".$this->map_id."[$polygon_id].setMap(map".$this->map_id.");
+        	";
+		}
+        return $_output;
+    }
+
+    /** #)MS
+     * adds a map polygon by map coordinates
+     * if color, weight and opacity are not defined, use the google maps defaults
+     * 
+     * @param string $lon1 the map longitude to draw from
+     * @param string $lat1 the map latitude to draw from
+     * @param string $lon2 the map longitude to draw to
+     * @param string $lat2 the map latitude to draw to
+     * @param string $id An array id to use to append coordinates to a line
+     * @param string $color the color of the border line (format: #000000)
+     * @param string $weight the weight of the line in pixels
+     * @param string $opacity the border line opacity (percentage)
+     * @param string $fill_color the polygon color (format: #000000)
+     * @param string $fill_opacity the polygon opacity (percentage)
+	 * @return string $id id of the created/updated polyline array
+     */
+    function addPolygonByCoords($lon1,$lat1,$lon2,$lat2,$id=false,$color='',$weight=0,$opacity=0,$fill_color='',$fill_opacity=0) {
+		if($id !== false && isset($this->_polygons[$id]) && is_array($this->_polygons[$id])){
+			$_polygon = $this->_polygons[$id];
+		}else{
+			//only set color,weight,and opacity if new polyline
+			$_polygon = array(
+				"color"=>$color,
+				"weight"=>$weight,
+				"opacity"=>$opacity,
+				"fill_color"=>$fill_color,
+				"fill_opacity"=>$fill_opacity,
+			);
+		}
+		if(!isset($_polygon['coords']) || !is_array($_polygon['coords'])){
+			$_polygon['coords'] = array(
+				"0"=> array("lat"=>$lat1, "long"=>$lon1),
+				"1"=> array("lat"=>$lat2, "long"=>$lon2)
+			);
+		}else{
+			$last_index = sizeof($_polygon['coords'])-1;
+			//check if lat1/lon1 point is already on polyline
+			if($_polygon['coords'][$last_index]["lat"] != $lat1 || $_polygon['coords'][$last_index]["long"]  != $lon1){
+				$_polygon['coords'][] = array("lat"=>$lat1, "long"=>$lon1);
+			}
+			$_polygon['coords'][] = array("lat"=>$lat2, "long"=>$lon2);
+		}
+        if($id === false){
+            $this->_polygons[] = $_polygon;
+            $id = count($this->_polygons) - 1;
+        }else{
+			$this->_polygons[$id] = $_polygon;
+        }
+        $this->adjustCenterCoords($lon1,$lat1);
+        $this->adjustCenterCoords($lon2,$lat2);
+        // return index of polyline
+        return $id;
+    }
+
+     /**#)MS
+     * adds polyline by passed array
+     * if color, weight and opacity are not defined, use the google maps defaults
+     * @param array $polyline_array array of lat/long coords
+     * @param string $id An array id to use to append coordinates to a line
+     * @param string $color the color of the line (format: #000000)
+     * @param string $weight the weight of the line in pixels
+     * @param string $opacity the line opacity (percentage)
+     * @param string $fill_color the polygon color (format: #000000)
+     * @param string $fill_opacity the polygon opacity (percentage)
+     * @return bool|int Array id of newly added point or false
+     */
+    function addPolygonByCoordsArray($polygon_array,$id=false,$color='',$weight=0,$opacity=0,$fill_color='',$fill_opacity=0){
+    	if(!is_array($polygon_array) || sizeof($polygon_array) < 3)
+    	   return false;
+    	$_prev_coords = "";
+    	$_next_coords = "";
+    	
+    	foreach($polygon_array as $_coords){
+    		$_prev_coords = $_next_coords;
+    		$_next_coords = $_coords;
+    		
+    		if($_prev_coords !== ""){
+    		  $_lt1=$_prev_coords["lat"];
+    		  $_ln1=$_prev_coords["long"];
+    		  $_lt2=$_next_coords["lat"];
+    		  $_ln2=$_next_coords["long"];
+    		  $id = $this->addPolygonByCoords($_ln1, $_lt1, $_ln2, $_lt2, $id, $color, $weight, $opacity, $fill_color, $fill_opacity);
+    		}
+    	}
+        return $id;
+    }
+}
 ?>
