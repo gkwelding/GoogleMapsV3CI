@@ -59,12 +59,9 @@ CREATE TABLE GEOCODES (
 /**  
  * Original class name is GoogleMapAPI
  * Changed class name to Gmap to remain compatible with applications already using the Gmap class
- * The changed class name affects three functions on lines 1529, 1534
  */ 
     
-class Gmap {
-
-    var $CI = null;
+class GMap {
     
     /**
      * contains any map styles in a json string
@@ -1528,12 +1525,12 @@ class Gmap {
     function createMarkerIcon($iconImage,$iconShadowImage = '',$iconAnchorX = 'x',$iconAnchorY = 'x',$infoWindowAnchorX = 'x',$infoWindowAnchorY = 'x') {
         $_icon_image_path = strpos($iconImage,'http') === 0 ? $iconImage : $_SERVER['DOCUMENT_ROOT'] . $iconImage;
         if(!($_image_info = @getimagesize($_icon_image_path))) {
-            die('Gmap:createMarkerIcon: Error reading image: ' . $iconImage);   
+            die('GoogleMapAPI:createMarkerIcon: Error reading image: ' . $iconImage);   
         }
         if($iconShadowImage) {
             $_shadow_image_path = strpos($iconShadowImage,'http') === 0 ? $iconShadowImage : $_SERVER['DOCUMENT_ROOT'] . $iconShadowImage;
             if(!($_shadow_info = @getimagesize($_shadow_image_path))) {
-                die('Gmap:createMarkerIcon: Error reading shadow image: ' . $iconShadowImage);
+                die('GoogleMapAPI:createMarkerIcon: Error reading shadow image: ' . $iconShadowImage);
             }
         }
         
